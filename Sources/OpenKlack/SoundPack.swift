@@ -27,12 +27,13 @@ struct SoundPack: Identifiable {
     var name: String { manifest.name }
 
     /// Resolve the sample list for a key class and stroke direction, falling
-    /// back to the default class when the pack has no specific mapping.
+    /// back per-direction to the default class when the pack has no specific
+    /// mapping (a class may define only `down` and inherit `default`'s `up`).
     func samples(for keyClass: KeyClass, up: Bool) -> [String] {
-        let entry = manifest.keys[keyClass.rawValue] ?? manifest.keys[KeyClass.default.rawValue]
-        guard let entry else { return [] }
-        if up { return entry.up ?? [] }
-        return entry.down
+        let entry = manifest.keys[keyClass.rawValue]
+        let fallback = manifest.keys[KeyClass.default.rawValue]
+        if up { return entry?.up ?? fallback?.up ?? [] }
+        return entry?.down ?? fallback?.down ?? []
     }
 
     static func discover(in soundsDir: URL) -> [SoundPack] {

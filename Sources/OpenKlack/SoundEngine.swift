@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 
 /// Low-latency sample player. A fixed pool of player nodes (each with its own
@@ -62,6 +63,39 @@ final class SoundEngine {
         }
         engine.mainMixerNode.outputVolume = volume
         engine.prepare()
+
+        // The engine stops itself when the output route changes (headphones,
+        // Bluetooth, display sleep). Rebuild the output connection and restart.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            self?.restart()
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.engine.isRunning else { return }
+            self.restart()
+        }
+    }
+
+    /// Re-negotiate the mixer→output connection (the hardware format may have
+    /// changed) and get every voice playing again.
+    private func restart() {
+        engine.stop()
+        let hwFormat = engine.outputNode.outputFormat(forBus: 0)
+        if hwFormat.sampleRate > 0 {
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: hwFormat)
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            NSLog("OpenKlack: engine restart failed: \(error)")
+            return
+        }
+        for v in voices { v.player.play() }
     }
 
     func start() throws {
@@ -135,6 +169,7 @@ final class SoundEngine {
 
     /// Load loose samples from Sounds/_extras/<name>.(wav|mp3|caf|aiff).
     func loadExtras(from dir: URL) {
+        extras.removeAll()
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
         for url in files where ["wav", "mp3", "caf", "aiff", "m4a"].contains(url.pathExtension) {
@@ -183,20 +218,24 @@ final class SoundEngine {
 
     /// Route audio to a specific output device (nil = system default).
     func setOutputDevice(_ deviceID: AudioDeviceID?) {
-        let wasRunning = engine.isRunning
         engine.stop()
         var id = deviceID ?? AudioDevices.defaultOutputDevice()
         if let unit = engine.outputNode.audioUnit, id != kAudioObjectUnknown {
-            AudioUnitSetProperty(unit,
-                                 kAudioOutputUnitProperty_CurrentDevice,
-                                 kAudioUnitScope_Global,
-                                 0,
-                                 &id,
-                                 UInt32(MemoryLayout<AudioDeviceID>.size))
+            let err = AudioUnitSetProperty(unit,
+                                           kAudioOutputUnitProperty_CurrentDevice,
+                                           kAudioUnitScope_Global,
+                                           0,
+                                           &id,
+                                           UInt32(MemoryLayout<AudioDeviceID>.size))
+            if err != noErr {
+                NSLog("OpenKlack: could not select output device \(id): \(err)")
+            }
         }
-        if wasRunning {
-            try? engine.start()
-            for v in voices { v.player.play() }
+        restart()
+        // If the chosen device refuses to start, fall back to the default
+        // device rather than staying silently dead.
+        if !engine.isRunning, deviceID != nil {
+            setOutputDevice(nil)
         }
     }
 }

@@ -68,9 +68,11 @@ final class AppState: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet {
             defaults.set(launchAtLogin, forKey: "launchAtLogin")
+            guard !reconcilingLoginItem else { return }
             updateLoginItem()
         }
     }
+    private var reconcilingLoginItem = false
     @Published var outputDeviceUID: String? {
         didSet {
             defaults.set(outputDeviceUID, forKey: "outputDeviceUID")
@@ -100,11 +102,11 @@ final class AppState: ObservableObject {
             "statsTotal": 0, "statsToday": 0, "statsTodayStamp": "",
         ])
         enabled = defaults.bool(forKey: "enabled")
-        volume = defaults.float(forKey: "volume")
+        volume = min(max(defaults.float(forKey: "volume"), 0), 1)
         selectedPackID = defaults.string(forKey: "pack") ?? "cream"
-        toneX = defaults.float(forKey: "toneX")
-        toneY = defaults.float(forKey: "toneY")
-        pitchVariation = defaults.float(forKey: "pitchVariation")
+        toneX = min(max(defaults.float(forKey: "toneX"), -1), 1)
+        toneY = min(max(defaults.float(forKey: "toneY"), -1), 1)
+        pitchVariation = min(max(defaults.float(forKey: "pitchVariation"), 0), 150)
         muteModifiers = defaults.bool(forKey: "muteModifiers")
         functionKeysAudible = defaults.bool(forKey: "functionKeysAudible")
         returnDing = defaults.bool(forKey: "returnDing")
@@ -130,11 +132,14 @@ final class AppState: ObservableObject {
         try? engine.start()
         applyOutputDevice()
 
+        // NSEvent monitor callbacks arrive on the main thread already; calling
+        // straight through keeps keystroke→sound latency at one buffer.
         listener.handler = { [weak self] event in
-            DispatchQueue.main.async { self?.handle(event) }
+            self?.handle(event)
         }
         accessibilityTrusted = Permissions.requestIfNeeded()
         listener.start()
+        reconcileLoginItem()
 
         // The permission can be granted after launch; poll until it lands so
         // the UI banner clears and monitors start delivering events.
@@ -162,24 +167,20 @@ final class AppState: ObservableObject {
         }
     }
 
-    func selectNextPack() {
-        guard let current = currentPack,
-              let idx = packs.firstIndex(where: { $0.id == current.id }),
-              !packs.isEmpty else { return }
-        selectedPackID = packs[(idx + 1) % packs.count].id
-    }
-
     // MARK: - Event handling
 
     static let toggleKeycode: UInt16 = 40 // 'k'
+    private var suppressNextKeyUp: UInt16?
 
     private func handle(_ event: KeyListener.Event) {
         switch event {
         case let .keyDown(keycode, isRepeat, flags):
-            // ⌘⌃K toggles Klack-style, even while disabled.
+            // ⌘⌃K toggles Klack-style, even while disabled. Swallow the
+            // matching key-up too, or enabling would emit an orphan release.
             if keycode == Self.toggleKeycode && !isRepeat,
                flags.contains(.command), flags.contains(.control) {
                 enabled.toggle()
+                suppressNextKeyUp = keycode
                 return
             }
             guard enabled, !isRepeat, audible(keycode) else { return }
@@ -195,6 +196,10 @@ final class AppState: ObservableObject {
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
             }
         case let .keyUp(keycode):
+            if keycode == suppressNextKeyUp {
+                suppressNextKeyUp = nil
+                return
+            }
             guard enabled, audible(keycode) else { return }
             let info = KeyMap.info(for: keycode)
             engine.playKey(keyClass: info.keyClass, up: true, x: info.x)
@@ -229,14 +234,23 @@ final class AppState: ObservableObject {
         }
         todayKeystrokes += 1
         totalKeystrokes += 1
-        // Writing defaults on every keystroke is cheap (in-memory cache), but
-        // batch the sync anyway.
+        // UserDefaults writes hit an in-memory cache; persist every N strokes
+        // to avoid two change notifications per keypress. flushStats() covers
+        // the remainder at quit.
+        if todayKeystrokes % 20 == 0 {
+            flushStats()
+        }
+    }
+
+    func flushStats() {
         defaults.set(todayKeystrokes, forKey: "statsToday")
         defaults.set(totalKeystrokes, forKey: "statsTotal")
     }
 
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
@@ -256,7 +270,16 @@ final class AppState: ObservableObject {
             }
         } catch {
             NSLog("OpenKlack: login item update failed: \(error)")
+            reconcileLoginItem()
         }
+    }
+
+    /// Keep the checkbox truthful: reflect the actual SMAppService status
+    /// (registration can fail, or be changed in System Settings).
+    func reconcileLoginItem() {
+        reconcilingLoginItem = true
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        reconcilingLoginItem = false
     }
 
     private func applyOutputDevice() {

@@ -25,6 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppState.shared.startUp()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppState.shared.flushStats()
+    }
 }
 
 /// Headless verification used by `make test`: loads every pack, checks all

@@ -3,6 +3,9 @@ import SwiftUI
 struct MenuView: View {
     @ObservedObject var state: AppState
     @State private var showAdvanced = false
+    // Cached: enumerating CoreAudio devices inside body would re-run on every
+    // keystroke (stats republish the whole AppState).
+    @State private var devices: [AudioDevices.Device] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -136,6 +139,7 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) { showAdvanced.toggle() }
+                if showAdvanced { devices = AudioDevices.outputDevices() }
             } label: {
                 HStack {
                     Text("Options")
@@ -173,7 +177,7 @@ struct MenuView: View {
             set: { state.outputDeviceUID = $0.isEmpty ? nil : $0 }
         )) {
             Text("System Default").tag("")
-            ForEach(AudioDevices.outputDevices()) { device in
+            ForEach(devices) { device in
                 Text(device.name).tag(device.uid)
             }
         }

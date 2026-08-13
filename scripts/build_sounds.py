@@ -12,7 +12,6 @@ Sources:
 from __future__ import annotations
 
 import json
-import shutil
 import urllib.request
 from pathlib import Path
 
@@ -131,11 +130,14 @@ VARIANTS_PER_ROW = 4
 def slice_oreo() -> None:
     print("pack oreo <- mechvibes/eg-oreo (sprite slice)")
     pack_dir = SOUNDS / "oreo"
-    work = pack_dir / "_src"
+    work = ROOT / "scripts" / ".cache" / "eg-oreo"
     fetch(f"{MECHVIBES_RAW}/eg-oreo/oreo.ogg", work / "oreo.ogg")
     fetch(f"{MECHVIBES_RAW}/eg-oreo/config.json", work / "config.json")
 
     config = json.loads((work / "config.json").read_text())
+    if config.get("key_define_type", "single") != "single":
+        raise SystemExit("eg-oreo config is no longer a single-sprite pack; "
+                         "the offset slicing below only handles that layout")
     defines: dict[str, list[int] | None] = config["defines"]
     audio, sr = sf.read(work / "oreo.ogg", dtype="float32")
     if audio.ndim == 1:
@@ -155,7 +157,9 @@ def slice_oreo() -> None:
         peak = np.abs(clip).max()
         if peak < 1e-4:
             return None
-        return clip * min(1.0, 0.7 / peak)
+        # Normalize toward -3 dBFS, boosting quiet slices at most 4x so the
+        # pack sits at a similar loudness to the kbsim sets.
+        return clip * min(4.0, 0.7 / peak)
 
     keys: dict[str, dict] = {}
     (pack_dir / "press").mkdir(parents=True, exist_ok=True)
@@ -195,7 +199,6 @@ def slice_oreo() -> None:
     }
     (pack_dir / "pack.json").write_text(json.dumps(manifest, indent=2))
     (pack_dir / "LICENSE").write_text(MECHVIBES_LICENSE)
-    shutil.rmtree(work)
 
 
 def synthesize_ding() -> None:
