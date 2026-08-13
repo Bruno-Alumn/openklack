@@ -175,11 +175,10 @@ final class AppState: ObservableObject {
 
     private func handle(_ event: KeyListener.Event) {
         switch event {
-        case let .keyDown(keycode, isRepeat):
+        case let .keyDown(keycode, isRepeat, flags):
             // ⌘⌃K toggles Klack-style, even while disabled.
             if keycode == Self.toggleKeycode && !isRepeat,
-               NSEvent.modifierFlags.contains(.command),
-               NSEvent.modifierFlags.contains(.control) {
+               flags.contains(.command), flags.contains(.control) {
                 enabled.toggle()
                 return
             }

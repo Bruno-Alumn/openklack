@@ -5,7 +5,7 @@ import AppKit
 /// our own UI is frontmost.
 final class KeyListener {
     enum Event {
-        case keyDown(keycode: UInt16, isRepeat: Bool)
+        case keyDown(keycode: UInt16, isRepeat: Bool, flags: NSEvent.ModifierFlags)
         case keyUp(keycode: UInt16)
         case mouseDown
         case mouseUp
@@ -47,7 +47,8 @@ final class KeyListener {
     private func process(_ event: NSEvent) {
         switch event.type {
         case .keyDown:
-            handler?(.keyDown(keycode: event.keyCode, isRepeat: event.isARepeat))
+            handler?(.keyDown(keycode: event.keyCode, isRepeat: event.isARepeat,
+                              flags: event.modifierFlags))
         case .keyUp:
             handler?(.keyUp(keycode: event.keyCode))
         case .flagsChanged:
@@ -59,7 +60,7 @@ final class KeyListener {
                 handler?(.keyUp(keycode: code))
             } else {
                 downModifiers.insert(code)
-                handler?(.keyDown(keycode: code, isRepeat: false))
+                handler?(.keyDown(keycode: code, isRepeat: false, flags: event.modifierFlags))
             }
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             handler?(.mouseDown)
