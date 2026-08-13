@@ -1,0 +1,88 @@
+{
+  "id": "oreo",
+  "name": "Oreo",
+  "attribution": "Everglide Oreo \u2014 sliced from hainguyents13/mechvibes eg-oreo pack (MIT)",
+  "license": "MIT",
+  "gainDb": 0,
+  "keys": {
+    "space": {
+      "down": [
+        "press/space.wav"
+      ]
+    },
+    "enter": {
+      "down": [
+        "press/enter.wav"
+      ]
+    },
+    "backspace": {
+      "down": [
+        "press/backspace.wav"
+      ]
+    },
+    "row0": {
+      "down": [
+        "press/row0_0.wav",
+        "press/row0_1.wav",
+        "press/row0_2.wav",
+        "press/row0_3.wav"
+      ]
+    },
+    "row1": {
+      "down": [
+        "press/row1_0.wav",
+        "press/row1_1.wav",
+        "press/row1_2.wav",
+        "press/row1_3.wav"
+      ]
+    },
+    "row2": {
+      "down": [
+        "press/row2_0.wav",
+        "press/row2_1.wav",
+        "press/row2_2.wav",
+        "press/row2_3.wav"
+      ]
+    },
+    "row3": {
+      "down": [
+        "press/row3_0.wav",
+        "press/row3_1.wav",
+        "press/row3_2.wav",
+        "press/row3_3.wav"
+      ]
+    },
+    "row4": {
+      "down": [
+        "press/row4_0.wav",
+        "press/row4_1.wav",
+        "press/row4_2.wav",
+        "press/row4_3.wav"
+      ]
+    },
+    "default": {
+      "down": [
+        "press/row0_0.wav",
+        "press/row0_1.wav",
+        "press/row0_2.wav",
+        "press/row0_3.wav",
+        "press/row1_0.wav",
+        "press/row1_1.wav",
+        "press/row1_2.wav",
+        "press/row1_3.wav",
+        "press/row2_0.wav",
+        "press/row2_1.wav",
+        "press/row2_2.wav",
+        "press/row2_3.wav",
+        "press/row3_0.wav",
+        "press/row3_1.wav",
+        "press/row3_2.wav",
+        "press/row3_3.wav",
+        "press/row4_0.wav",
+        "press/row4_1.wav",
+        "press/row4_2.wav",
+        "press/row4_3.wav"
+      ]
+    }
+  }
+}
