@@ -1,6 +1,10 @@
 APP := OpenKlack
 BUILD := .build/release
 BUNDLE := dist/$(APP).app
+# Ad-hoc by default. With "-", every rebuild changes the binary hash and
+# invalidates the Accessibility grant (see README). Set a real identity to
+# keep the grant across rebuilds.
+CODESIGN_ID ?= -
 
 .PHONY: all build bundle test sounds clean run
 
@@ -15,8 +19,10 @@ bundle: build
 	cp $(BUILD)/$(APP) $(BUNDLE)/Contents/MacOS/
 	cp Resources/Info.plist $(BUNDLE)/Contents/
 	cp -R Resources/Sounds $(BUNDLE)/Contents/Resources/Sounds
-	codesign --force --sign - $(BUNDLE)
+	codesign --force --sign "$(CODESIGN_ID)" $(BUNDLE)
 	@du -sh $(BUNDLE)
+	@echo "note: if this replaced an already-granted build, re-grant Accessibility:"
+	@echo "  tccutil reset Accessibility dev.openklack.OpenKlack && open $(BUNDLE)"
 
 # Rebuild the sound catalog from upstream sources (requires uv + network).
 sounds:

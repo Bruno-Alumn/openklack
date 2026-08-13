@@ -43,7 +43,14 @@ make run        # or: open dist/OpenKlack.app
 Requires macOS 13+ to run; Xcode command-line tools to build.
 
 On first launch, grant **Accessibility** permission
-(System Settings → Privacy & Security → Accessibility). OpenKlack uses it
+(System Settings → Privacy & Security → Accessibility).
+
+> **After rebuilding:** the app is ad-hoc signed, and macOS ties the
+> Accessibility grant to the exact binary hash. A rebuilt app shows as
+> "granted" in System Settings but isn't actually trusted. Fix:
+> `tccutil reset Accessibility dev.openklack.OpenKlack`, relaunch, and
+> grant again. (Signing with a real developer identity avoids this —
+> `make bundle CODESIGN_ID="Apple Development: you@example.com"`.) OpenKlack uses it
 solely to hear key up/down events and play a sound — nothing is stored or
 transmitted. The code that touches key events is ~90 lines in
 [`KeyListener.swift`](Sources/OpenKlack/KeyListener.swift); audit it yourself.
