@@ -21,6 +21,7 @@ final class AppState: ObservableObject {
         didSet {
             defaults.set(volume, forKey: "volume")
             engine.volume = volume
+            scheduleVolumePreview()
         }
     }
     @Published var selectedPackID: String {
@@ -54,10 +55,18 @@ final class AppState: ObservableObject {
         didSet { defaults.set(functionKeysAudible, forKey: "functionKeysAudible") }
     }
     @Published var returnDing: Bool {
-        didSet { defaults.set(returnDing, forKey: "returnDing") }
+        didSet {
+            defaults.set(returnDing, forKey: "returnDing")
+            if returnDing && oldValue != returnDing { engine.playExtra(named: "ding") }
+        }
     }
     @Published var mouseClicks: Bool {
-        didSet { defaults.set(mouseClicks, forKey: "mouseClicks") }
+        didSet {
+            defaults.set(mouseClicks, forKey: "mouseClicks")
+            if mouseClicks && oldValue != mouseClicks {
+                engine.playExtra(named: "click_down", gain: 0.9)
+            }
+        }
     }
     @Published var hapticFeedback: Bool {
         didSet { defaults.set(hapticFeedback, forKey: "hapticFeedback") }
@@ -129,8 +138,16 @@ final class AppState: ObservableObject {
         engine.setTone(x: toneX, y: toneY)
         applyPack(notify: false)
         engine.loadExtras(from: Self.soundsDirectory().appendingPathComponent("_extras"))
-        try? engine.start()
-        applyOutputDevice()
+        do {
+            try engine.start()
+        } catch {
+            klog.error("engine start failed: \(error, privacy: .public)")
+        }
+        // Only pin an output device when one is explicitly saved; default
+        // routing follows the system output on its own.
+        if outputDeviceUID != nil {
+            applyOutputDevice()
+        }
 
         // NSEvent monitor callbacks arrive on the main thread already; calling
         // straight through keeps keystroke→sound latency at one buffer.
@@ -140,16 +157,33 @@ final class AppState: ObservableObject {
         accessibilityTrusted = Permissions.requestIfNeeded()
         listener.start()
         reconcileLoginItem()
+        klog.notice("startup: trusted=\(self.accessibilityTrusted, privacy: .public) packs=\(self.packs.count, privacy: .public) device=\(self.outputDeviceUID ?? "default", privacy: .public)")
 
-        // The permission can be granted after launch; poll until it lands so
-        // the UI banner clears and monitors start delivering events.
+        // Monitors registered before the Accessibility grant never deliver
+        // events, and re-registering in-process isn't enough — the app has to
+        // relaunch. Poll for the grant and relaunch ourselves when it lands.
         if !accessibilityTrusted {
             Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
-                guard let self else { return timer.invalidate() }
+                guard self != nil else { return timer.invalidate() }
                 if Permissions.isTrusted {
                     timer.invalidate()
-                    self.accessibilityTrusted = true
-                    self.listener.start()
+                    klog.notice("accessibility granted — relaunching")
+                    Self.relaunch()
+                }
+            }
+        }
+    }
+
+    private static func relaunch() {
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: config) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    klog.error("relaunch failed: \(error, privacy: .public)")
+                } else {
+                    NSApp.terminate(nil)
                 }
             }
         }
@@ -160,11 +194,38 @@ final class AppState: ObservableObject {
     }
 
     private func applyPack(notify: Bool) {
-        guard let pack = currentPack else { return }
-        engine.load(pack: pack)
-        if notify && notifyOnSwitchChange {
-            postNotification(title: "Switch changed", body: pack.name)
+        guard let pack = currentPack else {
+            klog.error("no sound packs found")
+            return
         }
+        engine.load(pack: pack)
+        klog.notice("loaded pack \(pack.id, privacy: .public)")
+        if notify {
+            playSwitchPreview()
+            if notifyOnSwitchChange {
+                postNotification(title: "Switch changed", body: pack.name)
+            }
+        }
+    }
+
+    // MARK: - Preference previews (audible feedback for settings changes)
+
+    private var volumePreview: DispatchWorkItem?
+
+    /// A short down/up pair so a new switch or volume can be judged instantly.
+    private func playSwitchPreview() {
+        engine.playKey(keyClass: .row2, up: false, x: 0.5)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.engine.playKey(keyClass: .row2, up: true, x: 0.5)
+        }
+    }
+
+    /// Debounced so slider drags produce one preview, not a machine-gun burst.
+    private func scheduleVolumePreview() {
+        volumePreview?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.playSwitchPreview() }
+        volumePreview = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
     // MARK: - Event handling
@@ -172,7 +233,13 @@ final class AppState: ObservableObject {
     static let toggleKeycode: UInt16 = 40 // 'k'
     private var suppressNextKeyUp: UInt16?
 
+    private var loggedFirstEvent = false
+
     private func handle(_ event: KeyListener.Event) {
+        if !loggedFirstEvent {
+            loggedFirstEvent = true
+            klog.notice("first input event received — monitors are live")
+        }
         switch event {
         case let .keyDown(keycode, isRepeat, flags):
             // ⌘⌃K toggles Klack-style, even while disabled. Swallow the

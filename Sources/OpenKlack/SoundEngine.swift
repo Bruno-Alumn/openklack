@@ -1,5 +1,8 @@
 import AppKit
 import AVFoundation
+import os.log
+
+let klog = Logger(subsystem: "dev.openklack", category: "app")
 
 /// Low-latency sample player. A fixed pool of player nodes (each with its own
 /// varispeed unit for per-keystroke pitch randomization) feeds a master EQ
@@ -69,6 +72,7 @@ final class SoundEngine {
         NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
+            klog.notice("output configuration changed")
             self?.restart()
         }
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -92,16 +96,28 @@ final class SoundEngine {
         do {
             try engine.start()
         } catch {
-            NSLog("OpenKlack: engine restart failed: \(error)")
+            klog.error("engine restart failed: \(error, privacy: .public)")
             return
         }
-        for v in voices { v.player.play() }
+        reviveVoices()
+        klog.notice("engine restarted (hw \(hwFormat.sampleRate, privacy: .public) Hz)")
     }
 
     func start() throws {
         guard !engine.isRunning else { return }
         try engine.start()
-        for v in voices { v.player.play() }
+        reviveVoices()
+        klog.notice("engine started")
+    }
+
+    /// After any engine stop→start cycle, player nodes report a stale
+    /// `isPlaying == true` and `play()` alone is a no-op — they render
+    /// silence forever. A stop()+play() per node fully revives them.
+    private func reviveVoices() {
+        for v in voices {
+            v.player.stop()
+            v.player.play()
+        }
     }
 
     func stop() {
@@ -194,7 +210,16 @@ final class SoundEngine {
         let candidates = pack.samples(for: keyClass, up: up)
         guard !candidates.isEmpty,
               let rel = candidates.randomElement(),
-              let buffer = buffers["\(pack.id)/\(rel)"] else { return false }
+              let buffer = buffers["\(pack.id)/\(rel)"] else {
+            if !up {
+                klog.error("no sample for \(keyClass.rawValue, privacy: .public) in pack \(pack.id, privacy: .public)")
+            }
+            return false
+        }
+        if !engine.isRunning {
+            klog.error("play requested but engine not running")
+            return false
+        }
 
         let cents = pitchOffsetCents + Float.random(in: -pitchVariationCents...pitchVariationCents)
         let pan = (x - 0.5) * 2 * 0.35 * stereoSpread
