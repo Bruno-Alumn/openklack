@@ -35,7 +35,7 @@ no keystroke logging. The whole app bundle is **~1.6 MB**.
 ## Install
 
 ```sh
-git clone https://github.com/YOURUSER/openklack && cd openklack
+git clone https://github.com/amruth-sn/openklack && cd openklack
 make            # builds dist/OpenKlack.app
 make run        # or: open dist/OpenKlack.app
 ```
