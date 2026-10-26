@@ -143,7 +143,7 @@ final class SoundEngine {
         for rel in files {
             let url = pack.url.appendingPathComponent(rel)
             if let buf = Self.decode(url: url, to: format) {
-                newBuffers["\(pack.id)/\(rel)"] = buf
+                newBuffers["\(pack.id)/\(rel)"] = Self.trimNoise(buf)
             } else {
                 NSLog("OpenKlack: failed to decode \(url.path)")
             }
@@ -177,6 +177,64 @@ final class SoundEngine {
             return src
         }
         return error == nil ? dst : nil
+    }
+
+    /// Strip the recorded room noise before and after the keystroke. Most
+    /// samples carry a low-frequency noise floor only ~30 dB under the click
+    /// and end abruptly while it's still sounding; overlapping voices during
+    /// fast typing stack those tails into an audible hiss/rumble bed.
+    /// Keeps the span whose 2 ms RMS sits >10 dB above the sample's own noise
+    /// floor, with a 1 ms fade-in and a 15 ms cosine fade-out.
+    static func trimNoise(_ buf: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
+        guard let data = buf.floatChannelData else { return buf }
+        let channels = Int(buf.format.channelCount)
+        let frames = Int(buf.frameLength)
+        let sr = buf.format.sampleRate
+        let hop = max(1, Int(sr * 0.002))
+        let windows = frames / hop
+        guard windows >= 8 else { return buf }
+
+        var rms = [Float](repeating: 0, count: windows)
+        for w in 0..<windows {
+            var sum: Float = 0
+            for c in 0..<channels {
+                let ch = data[c]
+                for i in (w * hop)..<((w + 1) * hop) { sum += ch[i] * ch[i] }
+            }
+            rms[w] = (sum / Float(hop * channels)).squareRoot()
+        }
+        let peak = rms.max() ?? 0
+        let floor = rms.sorted()[windows / 10]
+        // Already clean (or nothing to separate): leave it alone.
+        guard peak > floor * 5.6 else { return buf } // 15 dB
+        let threshold = max(floor * 3.16, peak * 0.001) // +10 dB, -60 dB
+        guard let firstWin = rms.firstIndex(where: { $0 > threshold }),
+              let lastWin = rms.lastIndex(where: { $0 > threshold }) else { return buf }
+
+        let start = max(0, (firstWin - 1) * hop)
+        let keepEnd = min(frames, (lastWin + 1) * hop)
+        let end = min(frames, keepEnd + Int(sr * 0.015))
+        let length = end - start
+        guard length < frames,
+              let out = AVAudioPCMBuffer(pcmFormat: buf.format, frameCapacity: AVAudioFrameCount(length)),
+              let dst = out.floatChannelData else { return buf }
+        out.frameLength = AVAudioFrameCount(length)
+
+        let fadeIn = min(length, Int(sr * 0.001))
+        let fadeOut = end - keepEnd
+        for c in 0..<channels {
+            let src = data[c], o = dst[c]
+            for i in 0..<length {
+                var g: Float = 1
+                if i < fadeIn { g = Float(i) / Float(fadeIn) }
+                let k = i - (length - fadeOut)
+                if fadeOut > 0, k >= 0 {
+                    g *= 0.5 + 0.5 * cos(Float.pi * Float(k + 1) / Float(fadeOut))
+                }
+                o[i] = src[start + i] * g
+            }
+        }
+        return out
     }
 
     // MARK: - Extras (shared one-off samples, e.g. the return-key ding)
