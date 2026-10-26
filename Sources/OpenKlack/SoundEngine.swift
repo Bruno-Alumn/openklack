@@ -183,8 +183,11 @@ final class SoundEngine {
     /// samples carry a low-frequency noise floor only ~30 dB under the click
     /// and end abruptly while it's still sounding; overlapping voices during
     /// fast typing stack those tails into an audible hiss/rumble bed.
-    /// Keeps the span whose 2 ms RMS sits >10 dB above the sample's own noise
-    /// floor, with a 1 ms fade-in and a 15 ms cosine fade-out.
+    /// The room tone is measured from the sample's tail (a leading stretch of
+    /// digital silence would otherwise read as the floor). Sound is kept from
+    /// the first 2 ms window >6 dB above it until the level settles back near
+    /// it for 6 ms after the last real hit, then a 1 ms fade-in and a 10 ms
+    /// cosine fade-out are applied.
     static func trimNoise(_ buf: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
         guard let data = buf.floatChannelData else { return buf }
         let channels = Int(buf.format.channelCount)
@@ -203,24 +206,37 @@ final class SoundEngine {
             }
             rms[w] = (sum / Float(hop * channels)).squareRoot()
         }
-        let peak = rms.max() ?? 0
-        let floor = rms.sorted()[windows / 10]
-        // Already clean (or nothing to separate): leave it alone.
-        guard peak > floor * 5.6 else { return buf } // 15 dB
-        let threshold = max(floor * 3.16, peak * 0.001) // +10 dB, -60 dB
-        guard let firstWin = rms.firstIndex(where: { $0 > threshold }),
-              let lastWin = rms.lastIndex(where: { $0 > threshold }) else { return buf }
+        guard let peakWin = rms.indices.max(by: { rms[$0] < rms[$1] }) else { return buf }
+        let peak = rms[peakWin]
+        let tail = rms[(windows - max(4, windows / 4))...].sorted()
+        let noise = tail[tail.count / 2]
+        // No clear click over the room tone: nothing safe to separate.
+        guard peak > noise * 2.8 else { return buf } // 9 dB
+        let threshold = max(noise * 2, peak * 0.001) // +6 dB, or -60 dB
+        guard let firstWin = rms.firstIndex(where: { $0 > threshold }) else { return buf }
+        // A later hit well over the room tone (Oreo's second knock) is real
+        // sound, so only look for the cut after the last one.
+        let lastHit = max(peakWin, rms.lastIndex(where: { $0 > noise * 5.6 }) ?? peakWin) // 15 dB
+        let hold = 3 // 6 ms
+        var endWin = windows
+        for w in (lastHit + 1)..<max(lastHit + 1, windows - hold + 1)
+        where rms[w..<(w + hold)].allSatisfy({ $0 < threshold }) {
+            endWin = w
+            break
+        }
 
         let start = max(0, (firstWin - 1) * hop)
-        let keepEnd = min(frames, (lastWin + 1) * hop)
-        let end = min(frames, keepEnd + Int(sr * 0.015))
+        let keepEnd = min(frames, endWin * hop)
+        let end = min(frames, keepEnd + Int(sr * 0.010))
         let length = end - start
         guard length < frames,
               let out = AVAudioPCMBuffer(pcmFormat: buf.format, frameCapacity: AVAudioFrameCount(length)),
               let dst = out.floatChannelData else { return buf }
         out.frameLength = AVAudioFrameCount(length)
 
-        let fadeIn = min(length, Int(sr * 0.001))
+        // Only fade in where we cut into the recording; a click that starts
+        // on sample 0 keeps its attack.
+        let fadeIn = start > 0 ? min(length, Int(sr * 0.001)) : 0
         let fadeOut = end - keepEnd
         for c in 0..<channels {
             let src = data[c], o = dst[c]
